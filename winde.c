@@ -3,17 +3,25 @@
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 #include <termios.h>
 #include <sys/ioctl.h>
 
 #define CTRL_KEY(k) ((k) & 0x1f)
+#define ABUF_INIT {NULL , 0}
 
 typedef struct {
     int screenrows;
     int screencols;
     struct termios original_term;
 } editorConfig;
+
+
+typedef struct {
+    char* b;
+    int len;
+}abuf;
 
 editorConfig E;
 
@@ -78,7 +86,7 @@ int getCursorPosition(int *rows, int *cols){
 int getWindowSize(int *rows, int *cols){
     struct winsize ws;
 
-    if(1|| ioctl(STDIN_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0){
+    if(ioctl(STDIN_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0){
         if(write(STDIN_FILENO, "\x1b[999C\x1b[999B,",12) != 12) return -1;
         return getCursorPosition(rows, cols);
     } else{
@@ -87,6 +95,20 @@ int getWindowSize(int *rows, int *cols){
         return 0;
     }
 }
+
+void abAppend(abuf *ab , const char *s , int len){
+    char * new = realloc(ab->b , ab->len + len);
+
+    if (new == NULL) return ;
+    memcpy(&new[ab->len], s, len);
+    ab->b = new;
+    ab->len += len;
+}
+
+void abFree(abuf *ab){
+    free(ab->b);
+}
+
 
 /* Input the Key */
 void editorProcessKeyPress(){
@@ -104,20 +126,29 @@ void editorProcessKeyPress(){
  * https://espterm.github.io/docs/VT100%20escape%20codes.html
  */
 
-void editorDrawRows(){
+void editorDrawRows(abuf *ab){
     int y;
 
     for (y = 0; y < E.screenrows ; y++){
-        write(STDIN_FILENO, "~\r\n", 3);
+        abAppend(ab, "~", 1);
+
+        if (y < E.screenrows -1){
+            abAppend(ab,"\r\n", 2);
+        }
     }
 }
 
 void editorRefreshScreen(){
 
-    clearScreen();
-    editorDrawRows();
+    abuf ab = ABUF_INIT;
 
-    write(STDERR_FILENO, "\x1b[H", 3);
+    abAppend(&ab, "\x1b[2J", 4);
+    abAppend(&ab, "\x1b[H", 3);
+
+    editorDrawRows(&ab);
+
+    write(STDERR_FILENO,ab.b, ab.len);
+    abFree(&ab);
 }
 
 void clearScreen(){
