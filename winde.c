@@ -1,15 +1,21 @@
 #include <asm-generic/errno-base.h>
+#include <asm-generic/ioctls.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <termios.h>
+#include <sys/ioctl.h>
 
 #define CTRL_KEY(k) ((k) & 0x1f)
 
+typedef struct {
+    int screenrows;
+    int screencols;
+    struct termios original_term;
+} editorConfig;
 
-struct termios original_term;
-
+editorConfig E;
 
 void clearScreen();
 
@@ -22,16 +28,16 @@ void die ( const char *s){
 
 /* Changes Raw mode and sets it to the original Term */
 void disableRawMode(){
-    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &original_term) == -1) die("tcsetattr");
+    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &E.original_term) == -1) die("tcsetattr");
 }
 
 /* Enables the Raw mode using the orgi Term */
 void enableRawMode(){
 
-    if (tcgetattr(STDERR_FILENO, &original_term) == -1) die("tcsetattr");
+    if (tcgetattr(STDERR_FILENO, &E.original_term) == -1) die("tcsetattr");
     atexit(disableRawMode);
 
-    struct termios raw = original_term;
+    struct termios raw = E.original_term;
     cfmakeraw(&raw);
     raw.c_cc[VMIN] = 0;
     raw.c_cc[VTIME] = 1;
@@ -50,8 +56,20 @@ char editorReadKey(){
     return c;
 }
 
-/* Input the Key */
+/* Change the rows and cols using winsize from ioctl */
+int getWindowSize(int *rows, int *cols){
+    struct winsize ws;
 
+    if(ioctl(STDIN_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0){
+        return -1;
+    } else{
+        *cols = ws.ws_col;
+        *rows = ws.ws_row;
+        return 0;
+    }
+}
+
+/* Input the Key */
 void editorProcessKeyPress(){
    char c = editorReadKey();
 
@@ -76,9 +94,8 @@ void editorDrawRows(){
 }
 
 void editorRefreshScreen(){
-    write(STDOUT_FILENO, "\x1b[2J", 4);
-    write(STDOUT_FILENO, "\x1b[H", 3);
 
+    clearScreen();
     editorDrawRows();
 
     write(STDERR_FILENO, "\x1b[H", 3);
@@ -89,10 +106,13 @@ void clearScreen(){
     write(STDOUT_FILENO, "\x1b[H", 3);
 }
 
-
+void initEditor(){
+    if(getWindowSize(&E.screenrows, &E.screencols) == -1) die("getWindowSize");
+}
 
 int main(){
     enableRawMode();
+    initEditor();
 
     while( 1 ){
         editorRefreshScreen();
