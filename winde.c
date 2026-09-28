@@ -1,3 +1,8 @@
+
+#define _DEFAULT_SOURCE
+#define _BSD_SOURCE
+#define _GNU_SOURCE
+
 #include <asm-generic/errno-base.h>
 #include <asm-generic/ioctls.h>
 #include <errno.h>
@@ -25,9 +30,16 @@ typedef enum {
 } editorKey;
 
 typedef struct {
+  int size;
+  char *chars;
+} erows;
+
+typedef struct {
   int cx, cy;
   int screenrows;
   int screencols;
+  int noOfRows;
+  erows rows;
   struct termios original_term;
 } editorConfig;
 
@@ -178,6 +190,35 @@ int getWindowSize(int *rows, int *cols) {
   }
 }
 
+void editorOpen(char *filename) {
+  FILE *fp = fopen(filename, "r");
+  if (!fp) {
+    die("fopen");
+  }
+
+  char *line = NULL;
+  ssize_t lineLen;
+  size_t lineCap = 0;
+
+  lineLen = getline(&line, &lineCap, fp);
+
+  if (lineLen == -1) {
+    while (lineLen > 0 &&
+           (line[lineLen - 1] == '\n' || line[lineLen - 1] == '\r')) {
+      lineLen--;
+    }
+
+    E.rows.size = lineLen;
+    E.rows.chars = malloc(lineLen + 1);
+    memcpy(E.rows.chars, line, lineLen);
+    E.rows.chars[lineLen] = '\0';
+    E.noOfRows = 1;
+  }
+  free(line);
+  fclose(fp);
+}
+
+// Function to append a string to existing buffer . Allocates memory as needed.
 void abAppend(abuf *ab, const char *s, int len) {
   char *new = realloc(ab->b, ab->len + len);
 
@@ -260,25 +301,34 @@ void editorDrawRows(abuf *ab) {
   int y;
 
   for (y = 0; y < E.screenrows; y++) {
-    if (y == E.screenrows / 3) {
-      char welcome[80];
-      int welcomelen = snprintf(welcome, sizeof(welcome), "WINDE -- Version %s",
-                                WINDE_VERSION);
+    if (y >= E.noOfRows) {
+      if (E.noOfRows == 0 &&
+          y == E.screenrows /
+                   3) { // Check if empty rows and screen has atleast 3 rows.
+        char welcome[80];
+        int welcomelen = snprintf(welcome, sizeof(welcome),
+                                  "WINDE -- Version %s", WINDE_VERSION);
 
-      if (welcomelen > E.screencols)
-        welcomelen = E.screencols;
-      int padding = (E.screencols - welcomelen) / 2;
-      if (padding) {
+        if (welcomelen > E.screencols)
+          welcomelen = E.screencols;
+        int padding = (E.screencols - welcomelen) / 2;
+        if (padding) {
+          abAppend(ab, "~", 1);
+          padding--;
+        }
+        while (padding--) {
+          abAppend(ab, " ", 1);
+        }
+        abAppend(ab, welcome, welcomelen);
+      } else {
+
         abAppend(ab, "~", 1);
-        padding--;
       }
-      while (padding--) {
-        abAppend(ab, " ", 1);
-      }
-      abAppend(ab, welcome, welcomelen);
     } else {
-
-      abAppend(ab, "~", 1);
+      int len = E.rows.size;
+      if (len > E.screencols)
+        len = E.screencols;
+      abAppend(ab, E.rows.chars, len);
     }
 
     abAppend(ab, "\x1b[k", 3);
@@ -316,13 +366,17 @@ void clearScreen() {
 void initEditor() {
   E.cx = 0;
   E.cy = 0;
+  E.noOfRows = 0;
   if (getWindowSize(&E.screenrows, &E.screencols) == -1)
     die("getWindowSize");
 }
 
-int main() {
+int main(int argc, char *argv[]) {
   enableRawMode();
   initEditor();
+  if (argc == 2) {
+    editorOpen(argv[1]);
+  }
 
   while (1) {
     editorRefreshScreen();
