@@ -1,16 +1,13 @@
-
-#include <stddef.h>
 #define _DEFAULT_SOURCE
 #define _BSD_SOURCE
 #define _GNU_SOURCE
 
-#include <asm-generic/errno-base.h>
-#include <asm-generic/ioctls.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/types.h>
 #include <termios.h>
 #include <unistd.h>
 
@@ -37,6 +34,7 @@ typedef struct {
 
 typedef struct {
   int cx, cy;
+  int rowoff;
   int screenrows;
   int screencols;
   int noOfRows;
@@ -209,14 +207,14 @@ void editorOpen(char *filename) {
   }
 
   char *line = NULL;
-  ssize_t lineLen;
   size_t lineCap = 0;
+  ssize_t lineLen;
 
   while ((lineLen = getline(&line, &lineCap, fp) != 1)) {
     while (lineLen > 0 &&
-           (line[lineLen - 1] == '\n' || line[lineLen - 1] == '\r')) {
+           (line[lineLen - 1] == '\n' || line[lineLen - 1] == '\r'))
       lineLen--;
-    }
+
     editorAppendRow(line, lineLen);
   }
   free(line);
@@ -255,7 +253,7 @@ void editorMoveCursor(int key) {
     }
     break;
   case ARROW_DOWN:
-    if (E.cy != E.screenrows - 1) {
+    if (E.cy < E.noOfRows) {
       E.cy++;
     }
     break;
@@ -298,6 +296,15 @@ void editorProcessKeyPress() {
   }
 }
 
+void editorScroll() {
+  if (E.cy < E.rowoff) {
+    E.rowoff = E.cy;
+  }
+  if (E.cy >= E.rowoff + E.screenrows) {
+    E.rowoff = E.cy - E.screenrows + 1;
+  }
+}
+
 /*Function uses VT100 Escape Sequences which can be found here
  * https://espterm.github.io/docs/VT100%20escape%20codes.html
  */
@@ -306,10 +313,9 @@ void editorDrawRows(abuf *ab) {
   int y;
 
   for (y = 0; y < E.screenrows; y++) {
-    if (y >= E.noOfRows) {
-      if (E.noOfRows == 0 &&
-          y == E.screenrows /
-                   3) { // Check if empty rows and screen has atleast 3 rows.
+    int filerow = y + E.rowoff;
+    if (filerow >= E.noOfRows) {
+      if (E.noOfRows == 0 && y == E.screenrows / 3) {
         char welcome[80];
         int welcomelen = snprintf(welcome, sizeof(welcome),
                                   "WINDE -- Version %s", WINDE_VERSION);
@@ -330,7 +336,7 @@ void editorDrawRows(abuf *ab) {
         abAppend(ab, "~", 1);
       }
     } else {
-      int len = E.rows[y].size;
+      int len = E.rows[filerow].size;
       if (len > E.screencols)
         len = E.screencols;
       abAppend(ab, E.rows[y].chars, len);
@@ -345,6 +351,8 @@ void editorDrawRows(abuf *ab) {
 }
 
 void editorRefreshScreen() {
+
+  editorScroll();
 
   abuf ab = ABUF_INIT;
 
@@ -371,6 +379,7 @@ void clearScreen() {
 void initEditor() {
   E.cx = 0;
   E.cy = 0;
+  E.rowoff = 0;
   E.noOfRows = 0;
   E.rows = NULL;
   if (getWindowSize(&E.screenrows, &E.screencols) == -1)
@@ -380,7 +389,7 @@ void initEditor() {
 int main(int argc, char *argv[]) {
   enableRawMode();
   initEditor();
-  if (argc == 2) {
+  if (argc >= 2) {
     editorOpen(argv[1]);
   }
 
